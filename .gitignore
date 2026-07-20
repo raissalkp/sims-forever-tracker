@@ -1,0 +1,21 @@
+# Byte-compiled
+__pycache__/
+*.py[cod]
+
+# PyInstaller
+build/
+dist/
+*.spec
+
+# Local data — never commit your journal
+*.db
+config.json
+tracker.log
+tracker.lock
+
+# Environments / editors
+.venv/
+venv/
+.idea/
+.vscode/
+.DS_Store
