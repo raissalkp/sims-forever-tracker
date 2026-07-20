@@ -12,6 +12,7 @@ dist/
 config.json
 tracker.log
 tracker.lock
+.ps1
 
 # Environments / editors
 .venv/
