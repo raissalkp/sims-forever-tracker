@@ -1,4 +1,4 @@
-# 🟢 Sims Forever Tracker
+# 𖢻 Sims Forever Tracker
 
 **A session journal for generational Sims 4 saves.** It notices when The Sims 4
 opens and closes, and asks you the right question at the right moment:
@@ -74,17 +74,50 @@ reliably remember everything: the second you quit.
 ### Option A — download a build (easiest)
 
 **⬇️ [Download for Windows](../../releases/latest/download/SimsTracker-windows.exe)**
-· **⬇️ [Download for macOS](../../releases/latest/download/SimsTracker-macos)**
+· **⬇️ [Download for macOS](../../releases/latest/download/SimsTracker-macos.zip)**
 
 Those links always point at the newest release — no need to browse the
-Releases page or dig through build artifacts. Run it and it opens the main
-window. No Python needed.
+Releases page or dig through build artifacts. No Python needed.
 
 Older versions live on the [Releases](../../releases) page.
 
-> **macOS first run:** unsigned binaries are blocked by Gatekeeper. Right-click
-> the file → **Open** → **Open** to allow it once, or run
-> `xattr -d com.apple.quarantine SimsTracker-macos` in Terminal.
+### First run
+
+The app isn't code-signed — that needs a paid developer account from Apple
+and a certificate from Microsoft, which isn't worth it for a free tool. Both
+systems will warn you once. This is a one-time step.
+
+**macOS**
+
+1. Unzip and drag **SimsTracker.app** to your Applications folder.
+2. Double-click it. You'll get *"Apple could not verify… is free of
+   malware."* Click **Done**.
+3. Open **System Settings → Privacy & Security**, scroll down to *"SimsTracker
+   was blocked to protect your Mac"*, and click **Open Anyway**.
+4. Launch it again and choose **Open**. It'll run normally from then on.
+
+The old right-click → Open trick no longer works on current macOS versions.
+
+If you'd rather do it in one step:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/SimsTracker.app
+```
+
+The `-r` is required — an app bundle is a folder, and every file inside it is
+quarantined.
+
+**Windows**
+
+Double-click the `.exe`. SmartScreen shows *"Windows protected your PC"* —
+click **More info**, then **Run anyway**.
+
+Some antivirus tools also flag one-file PyInstaller builds, because they
+unpack themselves to a temp folder at startup. It's a well-known false
+positive. Build it yourself or run from source if you'd rather not take my
+word for it.
+
+
 
 ### Option B — run from source
 
@@ -167,7 +200,7 @@ the path to wherever you put the binary or script:
   <key>Label</key><string>com.simstracker</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/Users/YOU/Applications/SimsTracker-macos</string>
+    <string>/Applications/SimsTracker.app/Contents/MacOS/SimsTracker</string>
     <string>watch</string>
   </array>
   <key>RunAtLoad</key><true/>
@@ -232,6 +265,7 @@ any text editor. Changes take effect next time the app starts.
 | `show_recap_on_launch` | Set `false` if you only want the exit prompt |
 | `show_log_on_exit` | Set `false` if you only want the launch recap |
 | `theme` | `"dark"` or `"light"` |
+| `config_version` | Set by the app. Lets an update merge in new defaults once, without overwriting your edits. Don't change it by hand |
 | `fields` | The questions on the session log form (see below) |
 | `sim_fields` | The questions on a Sim profile — same format as `fields` |
 
@@ -327,6 +361,23 @@ executable, so your journal survives reinstalls and app updates:
 Inside you'll find `sessions.db` (your journal), `config.json` (settings),
 `tracker.log` (diagnostics), and `tracker.lock` (the single-instance PID file).
 
+### Upgrading to a new release
+
+**Downloading a new version never resets anything.** Because the data folder
+is separate from the executable, you replace `SimsTracker.exe` and everything
+carries over:
+
+- Every logged session and every Sim profile is kept
+- New fields added by an update appear as new columns; existing entries are
+  untouched
+- Your `config.json` keeps your own settings, custom fields, and process
+  names — and *gains* any new defaults the update introduced (a newly
+  supported game executable, a new profile field). Check `tracker.log` after
+  the first launch; it lists exactly what the upgrade added.
+
+Nothing is stored inside the binary, so you can delete and re-download it as
+often as you like.
+
 **Back up `sessions.db`.** It's a normal SQLite file — copy it anywhere, or open
 it with any SQLite browser. This is your save's memory; treat it like the save
 itself.
@@ -350,9 +401,19 @@ stopping any running tracker and clearing PyInstaller's cache.
 `assets/icon.icns` for macOS, and `assets/icon.png` is bundled so the app can
 show the logo in its own title bar and taskbar entry.
 
-The result lands in `dist/` — `SimsTracker.exe` on Windows, `SimsTracker` on
-macOS. Use `--windowed` instead of `--noconsole` on macOS if you want a proper
-`.app` bundle.
+The result lands in `dist/`. On Windows that's `SimsTracker.exe`.
+
+On macOS use `--windowed` instead of `--noconsole`, which produces **two**
+things: `dist/SimsTracker` (a raw Unix executable that only runs from a
+terminal — Finder opens it in a text editor) and `dist/SimsTracker.app` (the
+double-clickable bundle). **Ship the `.app`.**
+
+A `.app` is a directory, so archive it with `ditto` rather than `zip` — it
+preserves the bundle structure and the executable bit:
+
+```bash
+ditto -c -k --sequesterRsrc --keepParent dist/SimsTracker.app SimsTracker-macos.zip
+```
 
 PyInstaller can only build for the platform it runs on — a Windows `.exe` must
 be built on Windows. That's what the CI workflow below is for.
@@ -367,8 +428,8 @@ git tag v1.0.0
 git push --tags
 ```
 
-Wait a few minutes, and `SimsTracker-windows.exe` and `SimsTracker-macos` appear
-on your Releases page.
+Wait a few minutes, and `SimsTracker-windows.exe` and `SimsTracker-macos.zip`
+appear on your Releases page.
 
 **One-time repo setting:** Settings → Actions → General → Workflow permissions
 → **Read and write permissions**. Without it the release step fails with a 403,
@@ -437,8 +498,8 @@ simstracker/
 python -m unittest discover -s tests -v
 ```
 
-54 tests covering models, storage, config, exports, the Sim roster, game
-detection, and the instance lock. They run headless — no display or game required — because the
+63 tests covering models, storage, config upgrades, exports, the Sim roster,
+game detection, and the instance lock. They run headless — no display or game required — because the
 watcher is driven through an injected `is_game_running` and the UI layer is
 kept separate from the logic.
 
@@ -459,6 +520,13 @@ You have two copies running, usually because autostart is configured *and* you
 started one manually. Close one. If a previous run was force-killed, delete
 `tracker.lock` from the data folder.
 
+**On macOS the download opens as pages of garbled text.**
+You're launching the raw Unix executable instead of the app bundle. Finder
+can't run those, so it opens them in a text editor. Download
+`SimsTracker-macos.zip` from Releases, unzip it, and use the **SimsTracker.app**
+inside. (Releases before v1.3.1 shipped the raw binary by mistake — it works,
+but only from Terminal.)
+
 **Task Manager shows two SimsTracker processes.**
 Normal for a one-file build — a small bootloader unpacks the bundle and runs
 the real interpreter as a child. It's one app; don't kill either.
@@ -470,6 +538,13 @@ built with `--noconsole`.
 **Antivirus flags the .exe.**
 PyInstaller one-file builds are a common false positive because they unpack
 themselves at runtime. Building it yourself or running from source avoids it.
+
+**I updated and something's missing.**
+Nothing is stored in the executable, so an update can't remove data. Check
+`tracker.log` — the first line after an upgrade lists what changed. If a field
+you added yourself has vanished from the form, check that it's still in
+`sim_fields` or `fields` in `config.json`; the data is still in the database
+either way.
 
 **I lost my entries.**
 Check the data folder above — the database isn't stored next to the executable,

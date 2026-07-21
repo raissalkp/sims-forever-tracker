@@ -13,7 +13,7 @@ from .ui import (HistoryWindow, HomeWindow, LogWindow,
                  RecapWindow, SimsWindow)
 from .watcher import GameWatcher, SingleInstanceLock
 
-__version__ = "1.2.0"
+__version__ = "1.2.1"
 
 log = logging.getLogger("simstracker")
 
@@ -38,6 +38,12 @@ class TrackerApp:
             on_exit=self.handle_exit,
         )
         self._configure_logging()
+
+    def _log_config_upgrade(self) -> None:
+        """Tell the player what an upgrade added to their config."""
+        if self.config.upgrade_notes:
+            log.info("Config upgraded — added: %s",
+                     "; ".join(self.config.upgrade_notes))
 
     def _configure_logging(self) -> None:
         logging.basicConfig(
@@ -181,6 +187,7 @@ class TrackerApp:
                 return
             log.info("Sims Forever Tracker %s — data in %s",
                      __version__, self.config.data_dir)
+            self._log_config_upgrade()
             try:
                 self.watcher.run()
             except KeyboardInterrupt:

@@ -139,6 +139,60 @@ class TestConfig(TempDirCase):
         self.assertEqual(Config(self.tmp).poll_seconds, 10)
 
 
+class TestConfigUpgrade(TempDirCase):
+    """A new release must give existing installs the new defaults."""
+
+    def _write_old_config(self, **overrides) -> None:
+        import json
+        config = Config(self.tmp)
+        raw = json.loads(config.path.read_text())
+        raw["config_version"] = 1
+        raw.update(overrides)
+        config.path.write_text(json.dumps(raw))
+
+    def test_new_process_names_reach_existing_installs(self):
+        self._write_old_config(process_names=["ts4_x64.exe"])
+        upgraded = Config(self.tmp)
+        self.assertIn("ts4_dx9_x64.exe", upgraded.process_names)
+
+    def test_new_sim_fields_reach_existing_installs(self):
+        config = Config(self.tmp)
+        import json
+        raw = json.loads(config.path.read_text())
+        raw["config_version"] = 1
+        raw["sim_fields"] = [f for f in raw["sim_fields"]
+                             if f["key"] != "storyline"]
+        config.path.write_text(json.dumps(raw))
+        self.assertIn("storyline", [f.key for f in Config(self.tmp).sim_fields])
+
+    def test_player_customisations_survive_the_merge(self):
+        import json
+        config = Config(self.tmp)
+        raw = json.loads(config.path.read_text())
+        raw["config_version"] = 1
+        raw["process_names"] = ["my_custom_game.exe"]
+        raw["sim_fields"].append({"key": "theme_song", "label": "Theme song"})
+        raw["poll_seconds"] = 42
+        config.path.write_text(json.dumps(raw))
+
+        upgraded = Config(self.tmp)
+        self.assertIn("my_custom_game.exe", upgraded.process_names)
+        self.assertIn("theme_song", [f.key for f in upgraded.sim_fields])
+        self.assertEqual(upgraded.poll_seconds, 42)
+
+    def test_merge_runs_once_not_every_launch(self):
+        self._write_old_config(process_names=["ts4_x64.exe"])
+        Config(self.tmp)                       # performs the upgrade
+        second = Config(self.tmp)              # already current
+        self.assertEqual(second.upgrade_notes, [])
+        self.assertEqual(second.process_names.count("ts4_dx9_x64.exe"), 1)
+
+    def test_upgrade_notes_describe_what_changed(self):
+        self._write_old_config(process_names=["ts4_x64.exe"])
+        notes = Config(self.tmp).upgrade_notes
+        self.assertTrue(any("ts4_dx9" in n for n in notes), notes)
+
+
 class TestExporters(TempDirCase):
     def setUp(self):
         super().setUp()

@@ -15,6 +15,11 @@ from .models import FieldSpec
 
 APP_NAME = "SimsForeverTracker"
 
+# Bump when new defaults are added that existing installs should receive.
+# On upgrade, missing default process names and fields are merged into the
+# player's config once — their own edits, order, and extra fields are kept.
+CONFIG_VERSION = 2
+
 DEFAULT_PROCESS_NAMES = [
     "ts4_x64.exe",       # Windows, DX11 renderer (the usual one)
     "ts4_dx9_x64.exe",   # Windows, DX9 renderer (legacy mode / older GPUs)
@@ -97,6 +102,8 @@ class Config:
         self.show_log_on_exit: bool = True
         self.recap_delay_seconds: int = 20
         self.theme: str = "dark"
+        self.config_version: int = CONFIG_VERSION
+        self.upgrade_notes: list[str] = []
         self._field_data: list[dict[str, Any]] = [
             dict(f) for f in DEFAULT_FIELDS
         ]
@@ -106,6 +113,10 @@ class Config:
 
         if self.path.exists():
             self.load()
+            if self.config_version < CONFIG_VERSION:
+                self._merge_new_defaults()
+                self.config_version = CONFIG_VERSION
+                self.save()
         else:
             self.save()
 
@@ -152,12 +163,42 @@ class Config:
         self.recap_delay_seconds = max(
             0, int(data.get("recap_delay_seconds", self.recap_delay_seconds)))
         self.theme = str(data.get("theme", self.theme))
+        try:
+            self.config_version = int(data.get("config_version", 1))
+        except (TypeError, ValueError):
+            self.config_version = 1
         fields = data.get("fields")
         if isinstance(fields, list) and fields:
             self._field_data = fields
         sim_fields = data.get("sim_fields")
         if isinstance(sim_fields, list) and sim_fields:
             self._sim_field_data = sim_fields
+
+    def _merge_new_defaults(self) -> None:
+        """Give an upgrading install the defaults added since it was written.
+
+        Without this, someone who installed an older release would never
+        receive a newly supported game executable or a new profile field —
+        they'd have to hand-edit JSON, which is exactly the failure this
+        app exists to avoid.
+
+        Only *missing* keys are added. Existing entries, their order, and
+        any fields the player invented are left alone.
+        """
+        for name in DEFAULT_PROCESS_NAMES:
+            if name.lower() not in self.process_names:
+                self.process_names.append(name.lower())
+                self.upgrade_notes.append(f"watching {name}")
+
+        for label, current, defaults in (
+            ("session field", self._field_data, DEFAULT_FIELDS),
+            ("Sim field", self._sim_field_data, DEFAULT_SIM_FIELDS),
+        ):
+            known = {f.get("key") for f in current}
+            for spec in defaults:
+                if spec["key"] not in known:
+                    current.append(dict(spec))
+                    self.upgrade_notes.append(f"{label} '{spec['key']}'")
 
     def add_process_names(self, names: list[str]) -> list[str]:
         """Record newly detected game executables. Returns the ones added."""
@@ -172,6 +213,7 @@ class Config:
 
     def save(self) -> None:
         payload = {
+            "config_version": self.config_version,
             "process_names": self.process_names,
             "poll_seconds": self.poll_seconds,
             "show_recap_on_launch": self.show_recap_on_launch,

@@ -64,8 +64,8 @@ jobs:
             data: assets/icon.png;assets
           - os: macos-latest
             label: macOS
-            artifact: SimsTracker-macos
-            built: dist/SimsTracker
+            artifact: SimsTracker-macos.zip
+            built: dist/SimsTracker.app
             flags: --onefile --windowed
             icon: assets/icon.icns
             data: assets/icon.png:assets
@@ -93,12 +93,30 @@ jobs:
           --collect-submodules simstracker
           --icon ${{ matrix.icon }}
           --add-data "${{ matrix.data }}"
+          --osx-bundle-identifier com.simsforevertracker.app
           --name SimsTracker
           sims_tracker.py
 
-      - name: Rename artifact
-        shell: bash
-        run: mv "${{ matrix.built }}" "dist/${{ matrix.artifact }}"
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        run: Move-Item "${{ matrix.built }}" "dist/${{ matrix.artifact }}"
+
+      - name: Package (macOS)
+        if: runner.os == 'macOS'
+        # --windowed produces BOTH dist/SimsTracker (a raw Unix executable
+        # that Finder cannot launch — it opens it in a text editor) and
+        # dist/SimsTracker.app (the double-clickable bundle). Ship the app.
+        # A .app is a directory, so it must be archived; ditto preserves the
+        # bundle structure and the executable bit, which `zip` does not.
+        run: |
+          ditto -c -k --sequesterRsrc --keepParent \
+                "${{ matrix.built }}" "dist/${{ matrix.artifact }}"
+
+      - name: Verify the macOS bundle is launchable
+        if: runner.os == 'macOS'
+        run: |
+          test -x "dist/SimsTracker.app/Contents/MacOS/SimsTracker"
+          echo "App bundle looks good."
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
