@@ -507,7 +507,8 @@ class TestPackagingFiles(unittest.TestCase):
 
     def test_required_files_exist(self):
         for name in ("requirements.txt", "sims_tracker.py", "README.md",
-                     "LICENSE", ".github/workflows/release.yml"):
+                     "LICENSE", ".github/workflows/release.yml",
+                     "install.sh"):
             self.assertTrue((self.ROOT / name).exists(), f"{name} is missing")
 
     def test_requirements_lists_psutil(self):

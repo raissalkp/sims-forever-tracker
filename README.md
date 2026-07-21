@@ -81,6 +81,22 @@ Releases page or dig through build artifacts. No Python needed.
 
 Older versions live on the [Releases](../../releases) page.
 
+### Skip the macOS warning entirely (optional)
+
+Installing with `curl` avoids Gatekeeper's "Apple could not verify…" prompt,
+because the quarantine flag is set by web browsers rather than by macOS
+itself — files fetched with `curl` never get it. This is the same mechanism
+Homebrew relies on.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/YOUR-USERNAME/sims-forever-tracker/main/install.sh | bash
+```
+
+It downloads the latest release, installs `SimsTracker.app` to
+`/Applications`, and leaves your saved sessions untouched. Read
+[`install.sh`](install.sh) first if you like — you should with any install
+script, including this one.
+
 ### First run
 
 The app isn't code-signed — that needs a paid developer account from Apple
@@ -122,7 +138,7 @@ word for it.
 ### Option B — run from source
 
 ```bash
-git clone https://github.com/raissalkp/sims-forever-tracker.git
+git clone https://github.com/YOUR-USERNAME/sims-forever-tracker.git
 cd sims-forever-tracker
 pip install -r requirements.txt
 python sims_tracker.py
@@ -167,8 +183,10 @@ All commands:
 
 Export formats: `markdown`, `table`, `csv`, `json`.
 
-**In the log window:** `Ctrl+S` saves, `Esc` skips, and the household and
-sim-week fields prefill from your last entry.
+**Keyboard:** `Tab` and `Shift+Tab` move between fields (including out of
+multi-line boxes) and the form scrolls to follow, so long forms don't need
+the mouse at all. `Ctrl+S` saves, `Esc` closes. In the log window, the
+household and sim-week fields prefill from your last entry.
 
 ## Start automatically at login
 
@@ -527,6 +545,17 @@ can't run those, so it opens them in a text editor. Download
 inside. (Releases before v1.3.1 shipped the raw binary by mistake — it works,
 but only from Terminal.)
 
+**Two-finger / trackpad scrolling does nothing on macOS.**
+Fixed in v1.3.4. Scroll events carry different values on each platform —
+macOS sends small ones that the old handler rounded down to zero. Keyboard
+navigation works too: Tab moves between fields and the form scrolls to
+follow.
+
+**A button label looks cut off.**
+Fixed in v1.3.2 — the main window's buttons are on a grid that shares the
+width evenly instead of running off the edge. If you're on an older build,
+resizing the window wider brings the full label back.
+
 **Task Manager shows two SimsTracker processes.**
 Normal for a one-file build — a small bootloader unpacks the bundle and runs
 the real interpreter as a child. It's one app; don't kill either.
@@ -591,6 +620,22 @@ Issues and PRs welcome. If you're adding a feature, please:
 Ideas that would be genuinely useful: a system tray icon, screenshot
 attachments per session, a family-tree view, and per-household filtering in the
 history window.
+
+## Code signing
+
+The releases are unsigned, which is why both systems warn on first launch.
+Signing properly means:
+
+- **macOS** — an Apple Developer Program membership ($99/year), a Developer ID
+  certificate, and notarisation through Apple's service. Fully automatable in
+  the release workflow with the certificate held in repo secrets.
+- **Windows** — a code-signing certificate from a commercial CA (roughly
+  $200–400/year). SmartScreen also builds reputation over time, so warnings
+  fade as more people download a given signed binary.
+
+Neither is worth it for a free hobby tool, so the warnings are documented
+instead. If this ever gets enough users to justify it, the workflow is the
+only thing that needs changing.
 
 ## License
 

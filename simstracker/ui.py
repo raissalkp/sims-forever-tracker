@@ -6,6 +6,7 @@ noticed when it appears over the game's exit screen.
 """
 
 from __future__ import annotations
+import sys
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 from typing import Callable
@@ -168,15 +169,105 @@ class ScrollableFrame(ttk.Frame):
         )
         self._bind_wheel()
 
-    def _bind_wheel(self) -> None:
-        def on_wheel(event: tk.Event) -> None:
-            delta = event.delta
-            if delta == 0:                       # X11 sends Button-4/5
-                delta = 120 if getattr(event, "num", 5) == 4 else -120
-            self.canvas.yview_scroll(int(-delta / 120), "units")
+    WHEEL_EVENTS = ("<MouseWheel>", "<Button-4>", "<Button-5>")
 
-        for seq in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
-            self.canvas.bind_all(seq, on_wheel)
+    def _bind_wheel(self) -> None:
+        """Wheel and two-finger trackpad scrolling.
+
+        Bound on enter and released on leave rather than bound globally for
+        the lifetime of the window: `bind_all` is application-wide, so with
+        more than one scrollable area open the last one created would
+        otherwise swallow every scroll event.
+        """
+        self.bind("<Enter>", self._grab_wheel)
+        self.bind("<Leave>", self._release_wheel)
+        # <Enter> only fires when the pointer crosses in. Windows that open
+        # under the cursor — the log form does, every time you quit the
+        # game — would otherwise ignore the first scroll until you moved
+        # the mouse.
+        self.after(250, self._grab_if_pointer_inside)
+
+    def _grab_if_pointer_inside(self) -> None:
+        try:
+            under = self.winfo_containing(
+                self.winfo_pointerx(), self.winfo_pointery()
+            )
+        except tk.TclError:
+            return
+        widget = under
+        while widget is not None:
+            if widget is self:
+                self._grab_wheel()
+                return
+            widget = getattr(widget, "master", None)
+
+    def _grab_wheel(self, _event: tk.Event | None = None) -> None:
+        for seq in self.WHEEL_EVENTS:
+            self.canvas.bind_all(seq, self._on_wheel)
+
+    def _release_wheel(self, _event: tk.Event | None = None) -> None:
+        for seq in self.WHEEL_EVENTS:
+            try:
+                self.canvas.unbind_all(seq)
+            except tk.TclError:
+                pass
+
+    def _on_wheel(self, event: tk.Event) -> str:
+        """Translate a scroll event into lines, per platform.
+
+        The three platforms disagree completely:
+          * Windows sends delta in multiples of 120
+          * macOS sends small values (1, 2, 3) — dividing by 120 rounds to
+            zero, which is why trackpad scrolling did nothing before
+          * X11 sends no delta at all, using buttons 4 and 5 instead
+        """
+        number = getattr(event, "num", None)
+        if number in (4, 5):                       # X11
+            step = -1 if number == 4 else 1
+        elif sys.platform == "darwin":             # already in lines
+            step = -event.delta
+        else:                                      # Windows
+            step = -int(event.delta / 120)
+
+        if step:
+            self.canvas.yview_scroll(step, "units")
+        # "break" stops a small Text box under the pointer from consuming
+        # the gesture and scrolling its own three lines instead of the form.
+        return "break"
+
+    def ensure_visible(self, widget: tk.Widget, margin: int = 48) -> None:
+        """Scroll so `widget` is on screen, if it isn't already.
+
+        Without this, tabbing through a long form moves focus off the
+        bottom of the viewport and you have to reach for the mouse — which
+        defeats the point of tabbing. Called on every field's FocusIn.
+        """
+        try:
+            self.canvas.update_idletasks()
+            content_height = self.inner.winfo_height()
+            view_height = self.canvas.winfo_height()
+            if content_height <= 1 or view_height <= 1:
+                return
+            top = widget.winfo_rooty() - self.inner.winfo_rooty()
+            bottom = top + widget.winfo_height()
+        except tk.TclError:
+            return
+
+        view_top = self.canvas.canvasy(0)
+        view_bottom = view_top + view_height
+
+        if top - margin < view_top:
+            target = top - margin
+        elif bottom + margin > view_bottom:
+            target = bottom + margin - view_height
+        else:
+            return                      # already comfortably in view
+
+        target = max(0, min(target, content_height - view_height))
+        self.canvas.yview_moveto(target / content_height)
+
+    def scroll_to_top(self) -> None:
+        self.canvas.yview_moveto(0)
 
 
 class RecapWindow(BaseWindow):
@@ -255,26 +346,19 @@ class LogWindow(BaseWindow):
         ttk.Label(header, text=subtitle,
                   style="Muted.TLabel").pack(anchor="w", pady=(2, 6))
 
-        scroller = ScrollableFrame(self.body, bg=self.palette["bg"])
-        scroller.pack(fill="both", expand=True)
-        form = scroller.inner
+        self.scroller = ScrollableFrame(self.body, bg=self.palette["bg"])
+        self.scroller.pack(fill="both", expand=True)
+        self.form = FieldForm(self, self.scroller.inner, self.fields,
+                              scroller=self.scroller)
+        self.widgets = self.form.widgets
 
+        # Carry over the fields marked to prefill from the last session.
         previous = self.repository.latest()
-        for spec in self.fields:
-            ttk.Label(form, text=spec.label,
-                      style="Field.TLabel").pack(anchor="w", pady=(10, 2))
-            if spec.help_text:
-                ttk.Label(form, text=spec.help_text,
-                          style="Muted.TLabel").pack(anchor="w", pady=(0, 4))
-            if spec.multiline:
-                widget: tk.Widget = self._make_text(form, height=3)
-                widget.pack(fill="x", padx=(0, 4))
-            else:
-                widget = ttk.Entry(form)
-                widget.pack(fill="x", padx=(0, 4), ipady=4)
-                if spec.prefill_from_last and previous:
-                    widget.insert(0, previous.get(spec.key))
-            self.widgets[spec.key] = widget
+        if previous:
+            self.form.load({
+                spec.key: previous.get(spec.key)
+                for spec in self.fields if spec.prefill_from_last
+            })
 
         footer = ttk.Frame(self.body, style="App.TFrame")
         footer.pack(fill="x", pady=(14, 0))
@@ -282,23 +366,16 @@ class LogWindow(BaseWindow):
                    command=self.save).pack(side="right", padx=(8, 0))
         ttk.Button(footer, text="Skip",
                    command=self.close).pack(side="right")
-        ttk.Label(footer, text="Ctrl+S to save · Esc to skip",
+        ttk.Label(footer, text="Tab between fields · Ctrl+S to save · Esc to skip",
                   style="Muted.TLabel").pack(side="left")
 
         self.root.bind("<Control-s>", lambda _e: self.save())
         self.root.bind("<Control-Return>", lambda _e: self.save())
         # Focus the first field so the player can start typing immediately.
-        if self.fields:
-            self.widgets[self.fields[0].key].focus_set()
+        self.form.focus_first()
 
     def collect(self) -> dict[str, str]:
-        values: dict[str, str] = {}
-        for key, widget in self.widgets.items():
-            if isinstance(widget, tk.Text):
-                values[key] = widget.get("1.0", "end").strip()
-            else:
-                values[key] = widget.get().strip()
-        return values
+        return self.form.collect()
 
     def save(self) -> None:
         session = Session(values=self.collect(),
@@ -497,8 +574,8 @@ class HomeWindow(BaseWindow):
     """
 
     title_text = "Sims Forever Tracker"
-    width = 620
-    height = 620
+    width = 700
+    height = 660
 
     def __init__(self, session: Session | None, fields: list[FieldSpec],
                  theme: str = "dark", stats: str = "",
@@ -544,26 +621,34 @@ class HomeWindow(BaseWindow):
                 preview.insert("end", f"{value}\n\n")
         preview.configure(state="disabled")
 
-        # actions
+        # actions -------------------------------------------------------
+        # Laid out on a 3-column grid rather than packed left-to-right.
+        # Packed buttons keep their natural width and simply run off the
+        # edge of the window when a label is long or the system font is
+        # large — which is how "Detect my game" once rendered as "Dete".
+        # Grid cells share the width evenly and the buttons stretch to
+        # fill them, so nothing can be clipped at any window size.
         buttons = ttk.Frame(self.body, style="App.TFrame")
         buttons.pack(fill="x")
+        for column in range(3):
+            buttons.columnconfigure(column, weight=1, uniform="action")
 
         primary = ("Start watching" if not self.watching
                    else "Watching — keep running")
-        ttk.Button(buttons, text=primary, style="Accent.TButton",
-                   command=lambda: self._choose("watch")).pack(
-                       side="left", padx=(0, 8))
-        ttk.Button(buttons, text="Log a session",
-                   command=lambda: self._choose("log")).pack(
-                       side="left", padx=(0, 8))
-        ttk.Button(buttons, text="History",
-                   command=lambda: self._choose("history")).pack(
-                       side="left", padx=(0, 8))
-        ttk.Button(buttons, text="Sims & households",
-                   command=lambda: self._choose("sims")).pack(
-                       side="left", padx=(0, 8))
-        ttk.Button(buttons, text="Detect my game",
-                   command=self.detect).pack(side="left")
+        actions = [
+            (primary, lambda: self._choose("watch"), "Accent.TButton"),
+            ("Log a session", lambda: self._choose("log"), "TButton"),
+            ("History", lambda: self._choose("history"), "TButton"),
+            ("Sims & households", lambda: self._choose("sims"), "TButton"),
+            ("Detect my game", self.detect, "TButton"),
+        ]
+        for index, (label, command, style) in enumerate(actions):
+            row, column = divmod(index, 3)
+            ttk.Button(buttons, text=label, command=command,
+                       style=style).grid(
+                row=row, column=column, sticky="ew",
+                padx=(0 if column == 0 else 6, 0), pady=(0, 6),
+            )
 
         self.hint = ttk.Label(self.body, text=self.stats, style="Muted.TLabel")
         self.hint.pack(anchor="w", pady=(12, 0))
@@ -605,10 +690,12 @@ class FieldForm:
     """
 
     def __init__(self, window: "BaseWindow", parent: tk.Misc,
-                 fields: list[FieldSpec]) -> None:
+                 fields: list[FieldSpec],
+                 scroller: "ScrollableFrame | None" = None) -> None:
         self.window = window
         self.parent = parent
         self.fields = fields
+        self.scroller = scroller
         self.widgets: dict[str, tk.Widget] = {}
         self._build()
 
@@ -626,7 +713,40 @@ class FieldForm:
             else:
                 widget = ttk.Entry(self.parent)
                 widget.pack(fill="x", padx=(0, 4), ipady=4)
+            self._make_keyboard_friendly(widget)
             self.widgets[spec.key] = widget
+
+    def _make_keyboard_friendly(self, widget: tk.Widget) -> None:
+        """Tab between fields, and scroll to whatever gains focus.
+
+        Two fixes in one: a Text widget normally swallows Tab and inserts a
+        tab character, and focus moving below the fold leaves you reaching
+        for the mouse anyway.
+        """
+        if self.scroller is not None:
+            widget.bind(
+                "<FocusIn>",
+                lambda _e, w=widget: self.scroller.ensure_visible(w),
+                add="+",
+            )
+        if isinstance(widget, tk.Text):
+            def next_widget(event: tk.Event) -> str:
+                event.widget.tk_focusNext().focus_set()
+                return "break"
+
+            def previous_widget(event: tk.Event) -> str:
+                event.widget.tk_focusPrev().focus_set()
+                return "break"
+
+            widget.bind("<Tab>", next_widget)
+            widget.bind("<Shift-Tab>", previous_widget)
+            try:
+                # X11 reports shift-tab under its own keysym. Guarded
+                # because binding an unknown keysym raises on some
+                # platforms, and a failed bind must not break the form.
+                widget.bind("<ISO_Left_Tab>", previous_widget)
+            except tk.TclError:
+                pass
 
     def collect(self) -> dict[str, str]:
         values: dict[str, str] = {}
@@ -708,9 +828,10 @@ class SimsWindow(BaseWindow):
         panes.add(left, weight=1)
 
         right = ttk.Frame(panes, style="App.TFrame")
-        scroller = ScrollableFrame(right, bg=self.palette["bg"])
-        scroller.pack(fill="both", expand=True)
-        self.form = FieldForm(self, scroller.inner, self.fields)
+        self.scroller = ScrollableFrame(right, bg=self.palette["bg"])
+        self.scroller.pack(fill="both", expand=True)
+        self.form = FieldForm(self, self.scroller.inner, self.fields,
+                              scroller=self.scroller)
         panes.add(right, weight=2)
 
         footer = ttk.Frame(self.body, style="App.TFrame")
@@ -792,6 +913,7 @@ class SimsWindow(BaseWindow):
         self.current = sim
         self._loaded_values = dict(sim.values)
         self.form.load(sim.values)
+        self.scroller.scroll_to_top()
 
     def new_sim(self) -> None:
         if not self._confirm_discard():
