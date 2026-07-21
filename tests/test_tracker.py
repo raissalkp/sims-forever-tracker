@@ -508,12 +508,55 @@ class TestPackagingFiles(unittest.TestCase):
     def test_required_files_exist(self):
         for name in ("requirements.txt", "sims_tracker.py", "README.md",
                      "LICENSE", ".github/workflows/release.yml",
-                     "install.sh"):
+                     "install.sh", "version_info.txt"):
             self.assertTrue((self.ROOT / name).exists(), f"{name} is missing")
 
     def test_requirements_lists_psutil(self):
         text = (self.ROOT / "requirements.txt").read_text().lower()
         self.assertIn("psutil", text)
+
+
+class TestWindowsVersionResource(unittest.TestCase):
+    """version_info.txt must stay in step with the package version.
+
+    A mismatch is invisible until someone opens Properties on the .exe and
+    sees the wrong number, so it's worth catching in CI.
+    """
+
+    ROOT = pathlib.Path(__file__).resolve().parent.parent
+
+    def _fields(self) -> dict:
+        captured = {}
+
+        class Node:
+            def __init__(self, *a, **k):
+                self.args, self.kw = a, k
+
+        def string_struct(name, val):
+            captured[name] = val
+            return Node(name, val)
+
+        names = ("VSVersionInfo", "FixedFileInfo", "StringFileInfo",
+                 "StringTable", "VarFileInfo", "VarStruct")
+        namespace = {n: type(n, (Node,), {}) for n in names}
+        namespace["StringStruct"] = string_struct
+        info = eval((self.ROOT / "version_info.txt").read_text(), namespace)
+        return captured, info
+
+    def test_version_matches_package(self):
+        import simstracker
+        captured, _ = self._fields()
+        self.assertTrue(
+            captured["FileVersion"].startswith(simstracker.__version__),
+            f"version_info.txt says {captured['FileVersion']!r}, "
+            f"package says {simstracker.__version__!r}",
+        )
+
+    def test_describes_the_app(self):
+        captured, info = self._fields()
+        self.assertEqual(captured["ProductName"], "Sims Forever Tracker")
+        self.assertEqual(captured["OriginalFilename"], "SimsTracker.exe")
+        self.assertEqual(len(info.kw["ffi"].kw["filevers"]), 4)
 
 
 class TestVersionSanity(unittest.TestCase):

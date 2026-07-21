@@ -13,7 +13,7 @@ from .ui import (HistoryWindow, HomeWindow, LogWindow,
                  RecapWindow, SimsWindow)
 from .watcher import GameWatcher, SingleInstanceLock
 
-__version__ = "1.2.2"
+__version__ = "1.2.3"
 
 log = logging.getLogger("simstracker")
 

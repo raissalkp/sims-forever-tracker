@@ -57,9 +57,9 @@ jobs:
         include:
           - os: windows-latest
             label: Windows
-            artifact: SimsTracker-windows.exe
+            artifact: SimsTracker.exe
             built: dist/SimsTracker.exe
-            flags: --onefile --noconsole
+            flags: --onefile --noconsole --version-file version_info.txt
             icon: assets/icon.ico
             data: assets/icon.png;assets
           - os: macos-latest

@@ -1,0 +1,48 @@
+# Windows version resource for the built executable.
+#
+# Without this, Explorer has nothing to show but the filename, and the
+# Properties → Details tab is empty — which is exactly what makes an
+# unsigned download look untrustworthy. With it, Windows shows a proper
+# product name, description, and version, the way Discord and every other
+# real app does.
+#
+# Consumed by PyInstaller via --version-file version_info.txt
+#
+# Note: filevers and prodvers must be 4-integer tuples, and the version
+# strings should agree with __version__ in simstracker/app.py.
+
+VSVersionInfo(
+  ffi=FixedFileInfo(
+    filevers=(1, 3, 4, 0),
+    prodvers=(1, 3, 4, 0),
+    mask=0x3f,
+    flags=0x0,
+    OS=0x40004,
+    fileType=0x1,
+    subtype=0x0,
+    date=(0, 0)
+  ),
+  kids=[
+    StringFileInfo(
+      [
+        StringTable(
+          '040904B0',            # US English, Unicode
+          [
+            StringStruct('CompanyName', 'Sims Forever Tracker'),
+            StringStruct('FileDescription', 'Sims Forever Tracker'),
+            StringStruct('FileVersion', '1.3.4.0'),
+            StringStruct('InternalName', 'SimsTracker'),
+            StringStruct('LegalCopyright',
+                         'MIT Licence. Not affiliated with EA or Maxis.'),
+            StringStruct('OriginalFilename', 'SimsTracker.exe'),
+            StringStruct('ProductName', 'Sims Forever Tracker'),
+            StringStruct('ProductVersion', '1.2.3.0'),
+            StringStruct('Comments',
+                         'Session journal for generational Sims 4 saves.'),
+          ]
+        )
+      ]
+    ),
+    VarFileInfo([VarStruct('Translation', [1033, 1200])])
+  ]
+)

@@ -73,7 +73,7 @@ reliably remember everything: the second you quit.
 
 ### Option A — download a build (easiest)
 
-**⬇️ [Download for Windows](../../releases/latest/download/SimsTracker-windows.exe)**
+**⬇️ [Download for Windows](../../releases/latest/download/SimsTracker.exe)**
 · **⬇️ [Download for macOS](../../releases/latest/download/SimsTracker-macos.zip)**
 
 Those links always point at the newest release — no need to browse the
@@ -89,7 +89,7 @@ itself — files fetched with `curl` never get it. This is the same mechanism
 Homebrew relies on.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/YOUR-USERNAME/sims-forever-tracker/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/raissalkp/sims-forever-tracker/main/install.sh | bash
 ```
 
 It downloads the latest release, installs `SimsTracker.app` to
@@ -138,7 +138,7 @@ word for it.
 ### Option B — run from source
 
 ```bash
-git clone https://github.com/YOUR-USERNAME/sims-forever-tracker.git
+git clone https://github.com/raissalkp/sims-forever-tracker.git
 cd sims-forever-tracker
 pip install -r requirements.txt
 python sims_tracker.py
@@ -415,6 +415,12 @@ On Windows, `--add-data` needs a semicolon instead of a colon:
 `"assets\icon.png;assets"`. The included `build.ps1` handles this, along with
 stopping any running tracker and clearing PyInstaller's cache.
 
+**Windows metadata:** `version_info.txt` embeds the product name, version,
+description, and copyright into the `.exe`, so Explorer and the Properties →
+Details tab show proper app information instead of just a filename. Keep its
+version numbers in step with `__version__` in `simstracker/app.py` — there's a
+test that checks this.
+
 **Icons:** `assets/icon.ico` is used for the Windows executable,
 `assets/icon.icns` for macOS, and `assets/icon.png` is bundled so the app can
 show the logo in its own title bar and taskbar entry.
@@ -446,7 +452,7 @@ git tag v1.0.0
 git push --tags
 ```
 
-Wait a few minutes, and `SimsTracker-windows.exe` and `SimsTracker-macos.zip`
+Wait a few minutes, and `SimsTracker.exe` and `SimsTracker-macos.zip`
 appear on your Releases page.
 
 **One-time repo setting:** Settings → Actions → General → Workflow permissions
