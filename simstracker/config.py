@@ -16,10 +16,11 @@ from .models import FieldSpec
 APP_NAME = "SimsForeverTracker"
 
 DEFAULT_PROCESS_NAMES = [
-    "ts4_x64.exe",     # Windows, 64-bit (the usual one)
-    "ts4.exe",         # Windows, 32-bit / legacy
-    "the sims 4",      # macOS
-    "ts4_x64",         # macOS alternate
+    "ts4_x64.exe",       # Windows, DX11 renderer (the usual one)
+    "ts4_dx9_x64.exe",   # Windows, DX9 renderer (legacy mode / older GPUs)
+    "ts4.exe",           # Windows, 32-bit / older installs
+    "the sims 4",        # macOS
+    "ts4_x64",           # macOS alternate
 ]
 
 DEFAULT_FIELDS: list[dict[str, Any]] = [
@@ -41,6 +42,31 @@ DEFAULT_FIELDS: list[dict[str, Any]] = [
     {"key": "next_time", "label": "Where I left off / do next time",
      "multiline": True,
      "help_text": "Future-you reads this first thing next session."},
+]
+
+
+DEFAULT_SIM_FIELDS: list[dict[str, Any]] = [
+    {"key": "name", "label": "Sim name"},
+    {"key": "household", "label": "Household / family",
+     "prefill_from_last": True,
+     "help_text": "Groups the roster. Vance, Osei, Hollow…"},
+    {"key": "generation", "label": "Generation",
+     "prefill_from_last": True, "help_text": "Gen 1, Gen 2…"},
+    {"key": "story_role", "label": "Role in the story",
+     "help_text": "Founder, heir, spare, antagonist, spouse…"},
+    {"key": "status", "label": "Life stage / status",
+     "help_text": "Teen, adult, elder, deceased, ghost…"},
+    {"key": "traits", "label": "Traits", "multiline": True},
+    {"key": "aspiration", "label": "Aspiration"},
+    {"key": "career", "label": "Career / job"},
+    {"key": "goals", "label": "Goals for this Sim", "multiline": True,
+     "help_text": "What they must achieve before the generation ends."},
+    {"key": "storyline", "label": "Storyline / arc", "multiline": True,
+     "help_text": "Their beats from introduction to exit."},
+    {"key": "secrets", "label": "Secrets they hold", "multiline": True,
+     "help_text": "And who else knows."},
+    {"key": "relationships", "label": "Key relationships", "multiline": True},
+    {"key": "notes", "label": "Notes", "multiline": True},
 ]
 
 
@@ -74,6 +100,9 @@ class Config:
         self._field_data: list[dict[str, Any]] = [
             dict(f) for f in DEFAULT_FIELDS
         ]
+        self._sim_field_data: list[dict[str, Any]] = [
+            dict(f) for f in DEFAULT_SIM_FIELDS
+        ]
 
         if self.path.exists():
             self.load()
@@ -97,6 +126,10 @@ class Config:
     @property
     def fields(self) -> list[FieldSpec]:
         return [FieldSpec.from_dict(f) for f in self._field_data]
+
+    @property
+    def sim_fields(self) -> list[FieldSpec]:
+        return [FieldSpec.from_dict(f) for f in self._sim_field_data]
 
     # persistence
 
@@ -122,6 +155,20 @@ class Config:
         fields = data.get("fields")
         if isinstance(fields, list) and fields:
             self._field_data = fields
+        sim_fields = data.get("sim_fields")
+        if isinstance(sim_fields, list) and sim_fields:
+            self._sim_field_data = sim_fields
+
+    def add_process_names(self, names: list[str]) -> list[str]:
+        """Record newly detected game executables. Returns the ones added."""
+        added = [
+            n.lower() for n in names
+            if n and n.lower() not in self.process_names
+        ]
+        if added:
+            self.process_names.extend(added)
+            self.save()
+        return added
 
     def save(self) -> None:
         payload = {
@@ -132,6 +179,7 @@ class Config:
             "recap_delay_seconds": self.recap_delay_seconds,
             "theme": self.theme,
             "fields": self._field_data,
+            "sim_fields": self._sim_field_data,
         }
         self.path.write_text(
             json.dumps(payload, indent=2), encoding="utf-8"

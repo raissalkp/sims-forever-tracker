@@ -7,7 +7,7 @@ build/
 dist/
 *.spec
 
-# Local data — never commit your journal
+# Local data never commit your journal
 *.db
 config.json
 tracker.log
@@ -19,3 +19,6 @@ venv/
 .idea/
 .vscode/
 .DS_Store
+
+# Keep bundled icons tracked (do not ignore assets/)
+!assets/

@@ -1,4 +1,4 @@
-# 𖢻 Sims Forever Tracker
+# 🟢 Sims Forever Tracker
 
 **A session journal for generational Sims 4 saves.** It notices when The Sims 4
 opens and closes, and asks you the right question at the right moment:
@@ -11,6 +11,10 @@ Export to Markdown, a Notion-ready table, CSV, or JSON whenever you like.
 
 Windows and macOS · Python 3.10+ · MIT licensed
 
+[![Latest release](https://img.shields.io/github/v/release/raissalkp/sims-forever-tracker?label=download&color=7fc241)](../../releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/raissalkp/sims-forever-tracker/total?color=7fc241)](../../releases)
+[![Build](https://img.shields.io/github/actions/workflow/status/raissalkp/sims-forever-tracker/release.yml)](../../actions)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 ---
 
 ## Contents
@@ -19,6 +23,9 @@ Windows and macOS · Python 3.10+ · MIT licensed
 - [Features](#features)
 - [Install](#install)
 - [Usage](#usage)
+- [Start automatically at login](#start-automatically-at-login)
+  - [Windows](#windows-task-scheduler)
+  - [macOS](#macos-launchd)
 - [Configuration](#configuration)
   - [Customising the questions](#customising-the-questions)
   - [If the game isn't detected](#if-the-game-isnt-detected)
@@ -31,7 +38,6 @@ Windows and macOS · Python 3.10+ · MIT licensed
 - [Troubleshooting](#troubleshooting)
 - [FAQ](#faq)
 - [Contributing](#contributing)
-- [Related projects](#related-projects)
 - [License](#license)
 
 ---
@@ -58,6 +64,7 @@ reliably remember everything: the second you quit.
 | **Four export formats** | Markdown journal, Markdown table, CSV, JSON |
 | **Fully customisable** | Rename, add, or remove questions via a JSON config — no code editing |
 | **Safe schema upgrades** | Adding a question later never loses existing entries |
+| **Story bible** | A Sims & households page: traits, aspirations, careers, goals, storylines, secrets, and relationships, grouped by family and generation |
 | **Game auto-detection** | One button finds your game's executable, whichever renderer you use |
 | **Single instance** | A PID lock stops duplicate watchers; launching again opens the main window instead of failing silently |
 | **Runs quietly** | No console window in the frozen build; logs to a file for debugging |
@@ -66,9 +73,14 @@ reliably remember everything: the second you quit.
 
 ### Option A — download a build (easiest)
 
-Grab `SimsTracker-windows.exe` or `SimsTracker-macos` from the
-[Releases](../../releases) page and run it. It sits in the background waiting
-for the game. No Python needed.
+**⬇️ [Download for Windows](../../releases/latest/download/SimsTracker-windows.exe)**
+· **⬇️ [Download for macOS](../../releases/latest/download/SimsTracker-macos)**
+
+Those links always point at the newest release — no need to browse the
+Releases page or dig through build artifacts. Run it and it opens the main
+window. No Python needed.
+
+Older versions live on the [Releases](../../releases) page.
 
 > **macOS first run:** unsigned binaries are blocked by Gatekeeper. Right-click
 > the file → **Open** → **Open** to allow it once, or run
@@ -77,7 +89,7 @@ for the game. No Python needed.
 ### Option B — run from source
 
 ```bash
-git clone https://github.com/YOUR-USERNAME/sims-forever-tracker.git
+git clone https://github.com/raissalkp/sims-forever-tracker.git
 cd sims-forever-tracker
 pip install -r requirements.txt
 python sims_tracker.py
@@ -111,8 +123,10 @@ All commands:
 | `... detect` | Find running Sims processes and add them to your config |
 | `... log` | Open the log form now |
 | `... recap` | Show where you left off |
+| `... sims` | Edit Sims, traits, aspirations, goals, and storylines |
 | `... history` | Browse, search, export, and delete sessions |
 | `... export --format markdown` | Print your journal to the terminal |
+| `... export --sims --format table` | Export the Sim roster instead of sessions |
 | `... export --format table --out journal.md` | Write an export to a file |
 | `... config` | Print config, database, and log file locations |
 | `... --version` | Version number |
@@ -122,6 +136,78 @@ Export formats: `markdown`, `table`, `csv`, `json`.
 
 **In the log window:** `Ctrl+S` saves, `Esc` skips, and the household and
 sim-week fields prefill from your last entry.
+
+## Start automatically at login
+
+### Windows (Task Scheduler)
+
+1. Press <kbd>Win</kbd> and open **Task Scheduler**
+2. **Create Basic Task…** → name it `Sims Forever Tracker`
+3. Trigger: **When I log on**
+4. Action: **Start a program**
+   - *If using the .exe:* Program = the full path to `SimsTracker-windows.exe`, Arguments = `watch`
+   - *If using source:* Program = `pythonw.exe` (the **w** matters — no console
+     window), Arguments = the full path to `sims_tracker.py`, Start in = the
+     project folder
+5. Finish. Optionally reopen the task's properties and untick
+   *"Stop the task if it runs longer than…"* under **Settings**, so it isn't
+   killed after 3 days.
+
+### macOS (launchd)
+
+Save the following as `~/Library/LaunchAgents/com.simstracker.plist`, adjusting
+the path to wherever you put the binary or script:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+ "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.simstracker</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/YOU/Applications/SimsTracker-macos</string>
+    <string>watch</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+</dict>
+</plist>
+```
+
+Running from source instead? Use two `<string>` entries: the output of
+`which python3`, then the full path to `sims_tracker.py`.
+
+Load it:
+
+```bash
+launchctl load ~/Library/LaunchAgents/com.simstracker.plist
+```
+
+To stop it later: `launchctl unload ~/Library/LaunchAgents/com.simstracker.plist`
+
+## Sims & households
+
+The **Sims & households** page is a story bible for generational saves. One
+profile per Sim, grouped by family and generation:
+
+- Name, household, generation, and role in the story
+- Life stage or status (including deceased and ghost)
+- **Traits, aspiration, and career**
+- Goals for the generation, and their storyline arc
+- Secrets they hold, and key relationships
+- Free-form notes
+
+It exports in all four formats, so a Notion story-bible page is one command:
+
+```bash
+python sims_tracker.py export --sims --format markdown --out roster.md
+```
+
+The fields are configurable exactly like the session log — see `sim_fields`
+in `config.json`. Add a question, and the database gains a column on next
+launch without touching your existing profiles.
 
 ## Configuration
 
@@ -146,7 +232,8 @@ any text editor. Changes take effect next time the app starts.
 | `show_recap_on_launch` | Set `false` if you only want the exit prompt |
 | `show_log_on_exit` | Set `false` if you only want the launch recap |
 | `theme` | `"dark"` or `"light"` |
-| `fields` | The questions on the log form (see below) |
+| `fields` | The questions on the session log form (see below) |
+| `sim_fields` | The questions on a Sim profile — same format as `fields` |
 
 ### Customising the questions
 
@@ -248,8 +335,20 @@ itself.
 
 ```bash
 pip install pyinstaller
-pyinstaller --onefile --noconsole --name SimsTracker sims_tracker.py
+pyinstaller --onefile --noconsole \
+            --collect-submodules simstracker \
+            --icon assets/icon.ico \
+            --add-data "assets/icon.png:assets" \
+            --name SimsTracker sims_tracker.py
 ```
+
+On Windows, `--add-data` needs a semicolon instead of a colon:
+`"assets\icon.png;assets"`. The included `build.ps1` handles this, along with
+stopping any running tracker and clearing PyInstaller's cache.
+
+**Icons:** `assets/icon.ico` is used for the Windows executable,
+`assets/icon.icns` for macOS, and `assets/icon.png` is bundled so the app can
+show the logo in its own title bar and taskbar entry.
 
 The result lands in `dist/` — `SimsTracker.exe` on Windows, `SimsTracker` on
 macOS. Use `--windowed` instead of `--noconsole` on macOS if you want a proper
@@ -260,8 +359,8 @@ be built on Windows. That's what the CI workflow below is for.
 
 ## Automated releases
 
-`.github/workflows/build.yml` builds both platforms on GitHub's runners and
-attaches the binaries to a Release:
+`.github/workflows/release.yml` runs the tests, then builds both platforms on
+GitHub's runners and attaches the binaries to a Release:
 
 ```bash
 git tag v1.0.0
@@ -269,7 +368,30 @@ git push --tags
 ```
 
 Wait a few minutes, and `SimsTracker-windows.exe` and `SimsTracker-macos` appear
-on your Releases page. The workflow also runs the test suite first and refuses
+on your Releases page.
+
+**One-time repo setting:** Settings → Actions → General → Workflow permissions
+→ **Read and write permissions**. Without it the release step fails with a 403,
+because the repo default overrides the workflow's declared permissions.
+
+### Permanent download links
+
+Because the workflow attaches assets with fixed filenames, GitHub exposes a
+URL that always resolves to the newest release:
+
+```
+https://github.com/USER/REPO/releases/latest/download/SimsTracker-windows.exe
+```
+
+That's what the download links at the top of this README use, in the
+repo-relative form `../../releases/latest/download/<filename>`. Nothing needs
+updating when you cut a new version — as long as the asset filenames stay the
+same, the links keep working forever.
+
+This is different from build **artifacts**, which the Actions tab produces on
+every run: those expire after 90 days, require a GitHub login to download, and
+arrive as zip files. Release assets are permanent, public, and downloaded
+directly. Only tagged builds create them. The workflow also runs the test suite first and refuses
 to build if tests fail. You can trigger it manually from the **Actions** tab
 without tagging (`workflow_dispatch`).
 
@@ -280,26 +402,32 @@ doesn't know about windows, the windows don't know about SQL.
 
 ```
 simstracker/
-├── models.py      FieldSpec, Session          — plain data, no I/O
+├── models.py      FieldSpec, ValueBag → Session / SimProfile — no I/O
 ├── config.py      Config                      — JSON settings + platform paths
-├── repository.py  SessionRepository           — every SQL statement lives here
+├── repository.py  TableRepository → Session/SimRepository — all the SQL
 ├── watcher.py     GameWatcher, SingleInstanceLock — process detection
 ├── exporters.py   Exporter + 4 subclasses     — one class per output format
-├── ui.py          BaseWindow → Home/Recap/Log/History — Tkinter
+├── ui.py          BaseWindow → Home/Recap/Log/History/Sims, FieldForm
 └── app.py         TrackerApp, CommandLine     — wiring and CLI
 ```
 
-- **`Session` and `FieldSpec`** are value objects. The form, the database
-  schema, and all four exports are generated from the same `FieldSpec` list,
-  which is why adding a question is a one-line config change.
-- **`SessionRepository`** is the only thing that touches SQLite, so swapping
-  storage would mean rewriting one file.
+- **`FieldSpec` and `ValueBag`** are the core abstraction. A session and a
+  Sim profile are both "a list of configurable questions with free-text
+  answers", so they share a mixin — and the form builder, the schema
+  migration, and all four exporters work on either without modification.
+  Adding a question anywhere is a one-line config change.
+- **`TableRepository`** is an abstract base holding the connection, the
+  schema migration, and the generic queries. `SessionRepository` and
+  `SimRepository` supply only their table name and row mapping. All the SQL
+  in the app lives in this one file.
+- **`FieldForm`** builds and reads a form from a `FieldSpec` list, shared by
+  the session log and the Sim editor.
 - **`GameWatcher`** takes `on_launch` / `on_exit` callbacks rather than opening
   windows itself, which is what makes it testable without a display.
 - **`Exporter`** is an abstract base class; each format subclasses it and
   registers with `ExporterRegistry`. Adding a format = adding a class.
 - **`BaseWindow`** holds the theming, centering, and always-on-top behaviour
-  the four windows share.
+  every window shares.
 - **`HomeWindow`** records the player's choice in `self.action` and closes;
   `TrackerApp` reads it and dispatches. Tk never drives the application.
 
@@ -309,8 +437,8 @@ simstracker/
 python -m unittest discover -s tests -v
 ```
 
-35 tests covering models, storage, config, exports, game detection, and the
-instance lock. They run headless — no display or game required — because the
+54 tests covering models, storage, config, exports, the Sim roster, game
+detection, and the instance lock. They run headless — no display or game required — because the
 watcher is driven through an injected `is_game_running` and the UI layer is
 kept separate from the logic.
 
@@ -388,17 +516,6 @@ Issues and PRs welcome. If you're adding a feature, please:
 Ideas that would be genuinely useful: a system tray icon, screenshot
 attachments per session, a family-tree view, and per-household filtering in the
 history window.
-
-## Related projects
-
-Plenty of tools track challenge *points* or family *data*. This one tracks your
-*narrative session*, prompted automatically. If you want something different:
-
-- **[SimsChallengeTracker.com](https://www.simschallengetracker.com/)** — web app that tallies legacy challenge points and unlocks
-- **SimMattically's Challenge Tracker** — an in-game mod for goal checklists, tied to the household
-- **Graveyard** — a desktop GUI for tracking Sims families in detail
-- **Sims 4 Save Manager** — backup and restore for save files, with notes
-- Notion templates and save-file spreadsheets from the simblr community
 
 ## License
 

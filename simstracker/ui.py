@@ -9,7 +9,8 @@ from __future__ import annotations
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 from typing import Callable
-from .models import FieldSpec, Session
+from .models import FieldSpec, Session, SimProfile
+from .resources import Assets
 from .repository import SessionRepository
 
 THEMES = {
@@ -36,6 +37,7 @@ class BaseWindow:
         self.root = tk.Tk()
         self.root.title(self.title_text)
         self.root.configure(bg=self.palette["bg"])
+        self._apply_icon()
         self._center()
         self._apply_style()
         self._nudge_to_front()
@@ -59,6 +61,21 @@ class BaseWindow:
             pass
 
     # chrome
+
+    def _apply_icon(self) -> None:
+        """Put the plumbob-and-notebook logo in the title bar and taskbar.
+
+        Kept non-fatal: a missing or unreadable icon must never stop a
+        window from opening.
+        """
+        icon_path = Assets.icon_png()
+        if icon_path is None:
+            return
+        try:
+            self._icon = tk.PhotoImage(file=str(icon_path))
+            self.root.iconphoto(True, self._icon)
+        except tk.TclError:
+            pass
 
     def _center(self) -> None:
         self.root.update_idletasks()
@@ -542,6 +559,9 @@ class HomeWindow(BaseWindow):
         ttk.Button(buttons, text="History",
                    command=lambda: self._choose("history")).pack(
                        side="left", padx=(0, 8))
+        ttk.Button(buttons, text="Sims & households",
+                   command=lambda: self._choose("sims")).pack(
+                       side="left", padx=(0, 8))
         ttk.Button(buttons, text="Detect my game",
                    command=self.detect).pack(side="left")
 
@@ -574,3 +594,266 @@ class HomeWindow(BaseWindow):
         ):
             self.action = "save_detected"
             self.close()
+
+
+class FieldForm:
+    """Builds and reads a form from a list of FieldSpecs.
+
+    Shared by the session log and the Sim editor: both are just a list of
+    labelled questions, so the widget construction and value collection
+    live in one place.
+    """
+
+    def __init__(self, window: "BaseWindow", parent: tk.Misc,
+                 fields: list[FieldSpec]) -> None:
+        self.window = window
+        self.parent = parent
+        self.fields = fields
+        self.widgets: dict[str, tk.Widget] = {}
+        self._build()
+
+    def _build(self) -> None:
+        for spec in self.fields:
+            ttk.Label(self.parent, text=spec.label,
+                      style="Field.TLabel").pack(anchor="w", pady=(10, 2))
+            if spec.help_text:
+                ttk.Label(self.parent, text=spec.help_text,
+                          style="Muted.TLabel").pack(anchor="w", pady=(0, 4))
+            if spec.multiline:
+                widget: tk.Widget = self.window._make_text(self.parent,
+                                                           height=3)
+                widget.pack(fill="x", padx=(0, 4))
+            else:
+                widget = ttk.Entry(self.parent)
+                widget.pack(fill="x", padx=(0, 4), ipady=4)
+            self.widgets[spec.key] = widget
+
+    def collect(self) -> dict[str, str]:
+        values: dict[str, str] = {}
+        for key, widget in self.widgets.items():
+            if isinstance(widget, tk.Text):
+                values[key] = widget.get("1.0", "end").strip()
+            else:
+                values[key] = widget.get().strip()
+        return values
+
+    def load(self, values: dict[str, str]) -> None:
+        for key, widget in self.widgets.items():
+            value = (values.get(key) or "").strip()
+            if isinstance(widget, tk.Text):
+                widget.delete("1.0", "end")
+                widget.insert("1.0", value)
+            else:
+                widget.delete(0, "end")
+                widget.insert(0, value)
+
+    def clear(self) -> None:
+        self.load({})
+
+    def focus_first(self) -> None:
+        if self.fields:
+            self.widgets[self.fields[0].key].focus_set()
+
+
+class SimsWindow(BaseWindow):
+    """The story bible: every Sim's traits, aspiration, goals, and arc.
+
+    Master-detail — roster on the left grouped by household, editable
+    profile on the right. Kept deliberately close to the session log in
+    structure, because a Sim profile is the same thing: a list of
+    configurable questions with free-text answers.
+    """
+
+    title_text = "Sims & households"
+    width = 1000
+    height = 720
+
+    def __init__(self, repository, fields: list[FieldSpec],
+                 exporters, theme: str = "dark") -> None:
+        self.repository = repository
+        self.fields = fields
+        self.exporters = exporters
+        self.sims: list[SimProfile] = []
+        self.current: SimProfile | None = None
+        self._loaded_values: dict[str, str] = {}
+        super().__init__(theme)
+
+    # layout
+
+    def build(self) -> None:
+        toolbar = ttk.Frame(self.body, style="App.TFrame")
+        toolbar.pack(fill="x", pady=(0, 10))
+        ttk.Label(toolbar, text="Search").pack(side="left", padx=(0, 6))
+        self.search_var = tk.StringVar()
+        entry = ttk.Entry(toolbar, textvariable=self.search_var, width=26)
+        entry.pack(side="left", ipady=3)
+        entry.bind("<KeyRelease>", lambda _e: self.refresh())
+        ttk.Button(toolbar, text="Export roster",
+                   command=self.export).pack(side="right")
+        ttk.Button(toolbar, text="New Sim", style="Accent.TButton",
+                   command=self.new_sim).pack(side="right", padx=6)
+
+        panes = ttk.PanedWindow(self.body, orient="horizontal")
+        panes.pack(fill="both", expand=True)
+
+        left = ttk.Frame(panes, style="App.TFrame")
+        self.listbox = tk.Listbox(
+            left, activestyle="none", relief="flat", borderwidth=0,
+            bg=self.palette["surface"], fg=self.palette["text"],
+            selectbackground=self.palette["accent"],
+            selectforeground="#10130f", highlightthickness=0,
+        )
+        self.listbox.pack(fill="both", expand=True)
+        self.listbox.bind("<<ListboxSelect>>", lambda _e: self.on_select())
+        panes.add(left, weight=1)
+
+        right = ttk.Frame(panes, style="App.TFrame")
+        scroller = ScrollableFrame(right, bg=self.palette["bg"])
+        scroller.pack(fill="both", expand=True)
+        self.form = FieldForm(self, scroller.inner, self.fields)
+        panes.add(right, weight=2)
+
+        footer = ttk.Frame(self.body, style="App.TFrame")
+        footer.pack(fill="x", pady=(12, 0))
+        ttk.Button(footer, text="Save Sim", style="Accent.TButton",
+                   command=self.save).pack(side="right", padx=(8, 0))
+        ttk.Button(footer, text="Delete",
+                   command=self.delete).pack(side="right")
+        self.status = ttk.Label(footer, text="", style="Muted.TLabel")
+        self.status.pack(side="left")
+
+        self.root.bind("<Control-s>", lambda _e: self.save())
+        self.refresh()
+
+    # roster
+
+    def refresh(self, select_id: int | None = None) -> None:
+        self.sims = self.repository.search(self.search_var.get())
+        self.listbox.delete(0, "end")
+        self._row_index: dict[int, int] = {}
+
+        last_household = None
+        for sim in self.sims:
+            if sim.household != last_household:
+                self.listbox.insert("end", f"  {sim.household.upper()}")
+                self.listbox.itemconfigure(
+                    "end", foreground=self.palette["muted"])
+                last_household = sim.household
+            self.listbox.insert("end", f"      {sim.summary_line()}")
+            self._row_index[self.listbox.size() - 1] = sim.id
+
+        total = self.repository.count()
+        self.status.configure(
+            text=f"{len(self.sims)} shown · {total} Sims recorded")
+
+        if select_id is not None:
+            for row, sim_id in self._row_index.items():
+                if sim_id == select_id:
+                    self.listbox.selection_clear(0, "end")
+                    self.listbox.selection_set(row)
+                    self.on_select()
+                    return
+
+    def _selected_sim(self) -> SimProfile | None:
+        selection = self.listbox.curselection()
+        if not selection:
+            return None
+        sim_id = self._row_index.get(selection[0])
+        if sim_id is None:          # a household heading row
+            return None
+        return next((s for s in self.sims if s.id == sim_id), None)
+
+    # editing
+
+    def _is_dirty(self) -> bool:
+        current = self.form.collect()
+        if self.current is None:
+            return any(current.values())
+        return any(
+            current.get(k, "") != (self._loaded_values.get(k) or "").strip()
+            for k in self.form.widgets
+        )
+
+    def _confirm_discard(self) -> bool:
+        if not self._is_dirty():
+            return True
+        return messagebox.askyesno(
+            "Unsaved changes",
+            "This Sim has unsaved changes. Discard them?",
+            parent=self.root,
+        )
+
+    def on_select(self) -> None:
+        sim = self._selected_sim()
+        if sim is None or (self.current and sim.id == self.current.id):
+            return
+        if not self._confirm_discard():
+            return
+        self.current = sim
+        self._loaded_values = dict(sim.values)
+        self.form.load(sim.values)
+
+    def new_sim(self) -> None:
+        if not self._confirm_discard():
+            return
+        self.current = None
+        self._loaded_values = {}
+        self.form.clear()
+        # Carry the household over — you usually add a family at a time.
+        sim = self._selected_sim()
+        if sim is not None:
+            self.form.load({"household": sim.household})
+        self.listbox.selection_clear(0, "end")
+        self.form.focus_first()
+
+    def save(self) -> None:
+        values = self.form.collect()
+        if not any(values.values()):
+            messagebox.showinfo("Nothing to save",
+                                "Fill in at least a name first.",
+                                parent=self.root)
+            return
+        if self.current is None:
+            sim = self.repository.add(SimProfile(values=values))
+        else:
+            self.current.values = values
+            sim = self.repository.update(self.current)
+        self.current = sim
+        self._loaded_values = dict(values)
+        self.refresh(select_id=sim.id)
+
+    def delete(self) -> None:
+        if self.current is None or self.current.id is None:
+            return
+        if messagebox.askyesno(
+            "Delete Sim",
+            f"Delete {self.current.display_name} permanently?",
+            parent=self.root,
+        ):
+            self.repository.delete(self.current.id)
+            self.current = None
+            self._loaded_values = {}
+            self.form.clear()
+            self.refresh()
+
+    # export
+
+    def export(self) -> None:
+        choice = ExportDialog(self.root, self.exporters.names(),
+                              self.palette).ask()
+        if not choice:
+            return
+        exporter = self.exporters.get(choice)
+        path = filedialog.asksaveasfilename(
+            parent=self.root,
+            defaultextension=exporter.extension,
+            initialfile=f"sim-roster{exporter.extension}",
+            filetypes=[(choice.title(), f"*{exporter.extension}"),
+                       ("All files", "*.*")],
+        )
+        if not path:
+            return
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(exporter.render(self.repository.all()))
+        messagebox.showinfo("Exported", f"Saved to:\n{path}",
+                            parent=self.root)

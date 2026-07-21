@@ -8,11 +8,12 @@ from pathlib import Path
 from .config import Config
 from .exporters import ExporterRegistry
 from .models import Session
-from .repository import SessionRepository
-from .ui import HistoryWindow, HomeWindow, LogWindow, RecapWindow
+from .repository import SessionRepository, SimRepository
+from .ui import (HistoryWindow, HomeWindow, LogWindow,
+                 RecapWindow, SimsWindow)
 from .watcher import GameWatcher, SingleInstanceLock
 
-__version__ = "1.0.0"
+__version__ = "1.2.0"
 
 log = logging.getLogger("simstracker")
 
@@ -25,7 +26,11 @@ class TrackerApp:
         self.repository = SessionRepository(
             self.config.db_path, self.config.fields
         )
+        self.sims = SimRepository(
+            self.config.db_path, self.config.sim_fields
+        )
         self.exporters = ExporterRegistry(self.config.fields)
+        self.sim_exporters = ExporterRegistry(self.config.sim_fields)
         self.watcher = GameWatcher(
             process_names=self.config.process_names,
             poll_seconds=self.config.poll_seconds,
@@ -63,7 +68,12 @@ class TrackerApp:
             return ""
         hours = self.repository.total_minutes() // 60
         text = f"{count} session{'s' if count != 1 else ''} logged"
-        return text + (f" · {hours}h tracked" if hours else "")
+        if hours:
+            text += f" · {hours}h tracked"
+        sims = self.sims.count()
+        if sims:
+            text += f" · {sims} Sim{'s' if sims != 1 else ''} recorded"
+        return text
 
     def show_recap(self) -> None:
         RecapWindow(
@@ -103,6 +113,8 @@ class TrackerApp:
                 self.show_log()
             elif action == "history":
                 self.show_history()
+            elif action == "sims":
+                self.show_sims()
             elif action == "save_detected":
                 added = self.config.add_process_names(window.detected)
                 log.info("Added process names: %s", ", ".join(added) or "none")
@@ -123,6 +135,14 @@ class TrackerApp:
             return False
         return True
 
+    def show_sims(self) -> None:
+        SimsWindow(
+            repository=self.sims,
+            fields=self.config.sim_fields,
+            exporters=self.sim_exporters,
+            theme=self.config.theme,
+        ).show()
+
     def show_history(self) -> None:
         HistoryWindow(
             repository=self.repository,
@@ -133,14 +153,17 @@ class TrackerApp:
 
     # commands
 
-    def export(self, format_name: str, destination: Path | None) -> str:
-        exporter = self.exporters.get(format_name)
-        content = exporter.render(self.repository.all())
+    def export(self, format_name: str, destination: Path | None,
+               sims: bool = False) -> str:
+        registry = self.sim_exporters if sims else self.exporters
+        source = self.sims if sims else self.repository
+        exporter = registry.get(format_name)
+        content = exporter.render(source.all())
         if destination:
             destination = Path(destination)
             destination.write_text(content, encoding="utf-8")
-            log.info("Exported %s sessions to %s",
-                     self.repository.count(), destination)
+            log.info("Exported %s records to %s",
+                     source.count(), destination)
         return content
 
     def watch(self) -> None:
@@ -189,6 +212,7 @@ class CommandLine:
         sub.add_parser("log", help="log a session now")
         sub.add_parser("recap", help="show where you left off")
         sub.add_parser("history", help="browse, search, and export sessions")
+        sub.add_parser("sims", help="edit Sims, traits, goals and storylines")
 
         export = sub.add_parser("export", help="export your journal")
         export.add_argument(
@@ -198,6 +222,8 @@ class CommandLine:
         )
         export.add_argument("--out", type=Path, default=None,
                             help="write to a file instead of stdout")
+        export.add_argument("--sims", action="store_true",
+                            help="export the Sim roster instead of sessions")
 
         sub.add_parser("config", help="show config file location and values")
         return parser
@@ -227,8 +253,10 @@ class CommandLine:
             app.show_recap()
         elif command == "history":
             app.show_history()
+        elif command == "sims":
+            app.show_sims()
         elif command == "export":
-            content = app.export(args.format, args.out)
+            content = app.export(args.format, args.out, sims=args.sims)
             if not args.out:
                 print(content)
         elif command == "config":

@@ -2,7 +2,6 @@
 """Entry point for running from source or freezing with PyInstaller."""
 
 import sys
-
 from simstracker.app import main
 
 if __name__ == "__main__":

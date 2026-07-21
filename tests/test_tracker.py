@@ -1,6 +1,8 @@
 """Unit tests for the non-UI layers."""
 
 import datetime as dt
+import os
+import pathlib
 import sys
 import tempfile
 import unittest
@@ -10,8 +12,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from simstracker.config import Config
 from simstracker.exporters import ExporterRegistry
-from simstracker.models import FieldSpec, Session
-from simstracker.repository import SessionRepository
+from simstracker.models import FieldSpec, Session, SimProfile
+from simstracker.repository import SessionRepository, SimRepository
+from simstracker.resources import Assets
 from simstracker.watcher import GameWatcher, SingleInstanceLock
 
 FIELDS = [
@@ -219,17 +222,266 @@ class TestWatcher(unittest.TestCase):
 
 
 class TestSingleInstanceLock(TempDirCase):
+    MARKER = "python"   # matches the test runner, as the app matches itself
+
+    def _lock(self, marker: str | None = None) -> SingleInstanceLock:
+        return SingleInstanceLock(self.tmp / "t.lock",
+                                  marker=marker or self.MARKER)
+
     def test_second_instance_is_refused(self):
-        first = SingleInstanceLock(self.tmp / "t.lock")
+        first = self._lock()
         self.assertTrue(first.acquire())
-        self.assertFalse(SingleInstanceLock(self.tmp / "t.lock").acquire())
+        self.assertFalse(self._lock().acquire())
         first.release()
-        self.assertTrue(SingleInstanceLock(self.tmp / "t.lock").acquire())
+        self.assertTrue(self._lock().acquire())
 
     def test_stale_lock_is_reclaimed(self):
-        path = self.tmp / "t.lock"
-        path.write_text("999999")  # PID that does not exist
-        self.assertTrue(SingleInstanceLock(path).acquire())
+        (self.tmp / "t.lock").write_text("999999")  # PID that cannot exist
+        self.assertTrue(self._lock().acquire())
+
+    def test_unrelated_process_does_not_hold_the_lock(self):
+        """PID reuse must not lock the player out permanently."""
+        (self.tmp / "t.lock").write_text(str(os.getpid()))
+        self.assertTrue(self._lock(marker="definitely-not-this-app").acquire())
+
+    def test_marker_matching_ignores_punctuation(self):
+        """SimsTracker.exe and sims_tracker.py must both be recognised."""
+        norm = SingleInstanceLock._normalise
+        self.assertEqual(norm("SimsTracker.exe"), "simstrackerexe")
+        self.assertIn(norm("simstracker"), norm("sims_tracker.py"))
+
+    def test_holder_pid_is_reported(self):
+        first = self._lock()
+        first.acquire()
+        second = self._lock()
+        second.acquire()
+        self.assertEqual(second.holder_pid, os.getpid())
+        first.release()
+
+
+class TestDetectCandidates(unittest.TestCase):
+    def test_finds_matching_processes_and_excludes_self(self):
+        class FakeProc:
+            def __init__(self, name):
+                self.info = {"name": name}
+
+        import simstracker.watcher as w
+        original = w.psutil.process_iter
+        w.psutil.process_iter = lambda attrs=None: [
+            FakeProc("TS4_DX9_x64.exe"),
+            FakeProc("TS4_x64.exe"),
+            FakeProc("SimsTracker.exe"),     # our own app, must be skipped
+            FakeProc("chrome.exe"),
+        ]
+        try:
+            found = GameWatcher.detect_candidates()
+        finally:
+            w.psutil.process_iter = original
+        self.assertIn("ts4_dx9_x64.exe", found)
+        self.assertIn("ts4_x64.exe", found)
+        self.assertNotIn("simstracker.exe", found)
+        self.assertNotIn("chrome.exe", found)
+
+
+class TestConfigProcessNames(TempDirCase):
+    def test_add_process_names_deduplicates(self):
+        config = Config(self.tmp)
+        added = config.add_process_names(["TS4_Weird_Build.exe", "ts4_x64.exe"])
+        self.assertEqual(added, ["ts4_weird_build.exe"])  # 2nd already default
+        self.assertIn("ts4_weird_build.exe", Config(self.tmp).process_names)
+
+    def test_dx9_is_a_default(self):
+        self.assertIn("ts4_dx9_x64.exe", Config(self.tmp).process_names)
+
+
+SIM_FIELDS = [
+    FieldSpec("name", "Sim name"),
+    FieldSpec("household", "Household / family"),
+    FieldSpec("generation", "Generation"),
+    FieldSpec("story_role", "Role in the story"),
+    FieldSpec("traits", "Traits", multiline=True),
+    FieldSpec("aspiration", "Aspiration"),
+    FieldSpec("goals", "Goals", multiline=True),
+]
+
+
+class TestSimProfile(unittest.TestCase):
+    def test_display_name_falls_back(self):
+        self.assertEqual(SimProfile().display_name, "(unnamed Sim)")
+        self.assertEqual(
+            SimProfile(values={"name": "Marisol Vance"}).display_name,
+            "Marisol Vance")
+
+    def test_household_falls_back(self):
+        self.assertEqual(SimProfile().household, "No household")
+
+    def test_summary_includes_context(self):
+        sim = SimProfile(values={"name": "Colm Brennan",
+                                 "generation": "Gen 1",
+                                 "story_role": "The Thief"})
+        line = sim.summary_line()
+        self.assertIn("Colm Brennan", line)
+        self.assertIn("Gen 1", line)
+
+    def test_markdown_does_not_repeat_the_name(self):
+        sim = SimProfile(values={"name": "Ama Osei", "traits": "Hot-Headed"})
+        md = sim.to_markdown(SIM_FIELDS)
+        self.assertIn("## Ama Osei", md)
+        self.assertEqual(md.count("Ama Osei"), 1)
+        self.assertIn("Hot-Headed", md)
+
+
+class TestSimRepository(TempDirCase):
+    def setUp(self):
+        super().setUp()
+        self.repo = SimRepository(self.tmp / "s.db", SIM_FIELDS)
+
+    def test_add_and_retrieve(self):
+        self.repo.add(SimProfile(values={"name": "Silas Hollow",
+                                         "household": "Hollow",
+                                         "traits": "Evil, Self-Assured"}))
+        sim = self.repo.latest()
+        self.assertEqual(sim.display_name, "Silas Hollow")
+        self.assertIn("Evil", sim.get("traits"))
+
+    def test_update_changes_not_duplicates(self):
+        sim = self.repo.add(SimProfile(values={"name": "Kira", "goals": "a"}))
+        sim.values["goals"] = "b"
+        self.repo.update(sim)
+        self.assertEqual(self.repo.count(), 1)
+        self.assertEqual(self.repo.get_by_id(sim.id).get("goals"), "b")
+
+    def test_update_without_id_inserts(self):
+        self.repo.update(SimProfile(values={"name": "New Sim"}))
+        self.assertEqual(self.repo.count(), 1)
+
+    def test_grouped_by_household_then_generation(self):
+        for name, house, gen in [("Ash", "Vance", "Gen 4"),
+                                 ("Marisol", "Vance", "Gen 1"),
+                                 ("Ama", "Osei", "Gen 1")]:
+            self.repo.add(SimProfile(values={"name": name,
+                                             "household": house,
+                                             "generation": gen}))
+        order = [s.display_name for s in self.repo.all()]
+        self.assertEqual(order, ["Ama", "Marisol", "Ash"])
+
+    def test_households_are_listed_once(self):
+        self.repo.add(SimProfile(values={"name": "A", "household": "Vance"}))
+        self.repo.add(SimProfile(values={"name": "B", "household": "Vance"}))
+        self.assertEqual(self.repo.households(), ["Vance"])
+
+    def test_search_across_fields(self):
+        self.repo.add(SimProfile(values={"name": "Colm",
+                                         "traits": "Kleptomaniac"}))
+        self.repo.add(SimProfile(values={"name": "Ama",
+                                         "traits": "Hot-Headed"}))
+        self.assertEqual(len(self.repo.search("klepto")), 1)
+
+    def test_sims_and_sessions_share_a_database(self):
+        """Both tables must coexist in the one file without clashing."""
+        sessions = SessionRepository(self.tmp / "s.db", FIELDS)
+        sessions.add(Session(values={"household": "Vance"}))
+        self.repo.add(SimProfile(values={"name": "Marisol"}))
+        self.assertEqual(sessions.count(), 1)
+        self.assertEqual(self.repo.count(), 1)
+
+    def test_adding_a_sim_field_later_preserves_rows(self):
+        self.repo.add(SimProfile(values={"name": "Vera"}))
+        extended = SIM_FIELDS + [FieldSpec("theme_song", "Theme song")]
+        repo2 = SimRepository(self.tmp / "s.db", extended)
+        self.assertEqual(repo2.count(), 1)
+        repo2.add(SimProfile(values={"name": "Damon",
+                                     "theme_song": "something occult"}))
+        self.assertEqual(repo2.search("occult")[0].display_name, "Damon")
+
+
+class TestRosterExport(unittest.TestCase):
+    def setUp(self):
+        self.registry = ExporterRegistry(SIM_FIELDS)
+        self.sims = [
+            SimProfile(values={"name": "Marisol Vance", "household": "Vance",
+                               "traits": "Ambitious, Creative, Paranoid"}),
+            SimProfile(values={"name": "Colm Brennan", "household": "Brennan",
+                               "traits": "Kleptomaniac"}),
+        ]
+
+    def test_every_format_handles_sims(self):
+        for name in ExporterRegistry.names():
+            output = self.registry.get(name).render(self.sims)
+            self.assertIn("Marisol Vance", output, f"{name} lost data")
+            self.assertIn("Kleptomaniac", output, f"{name} lost data")
+
+    def test_roster_has_no_date_column(self):
+        table = self.registry.get("table").render(self.sims)
+        self.assertNotIn("| Date |", table)
+
+    def test_roster_keeps_household_order(self):
+        md = self.registry.get("markdown").render(self.sims)
+        self.assertLess(md.index("Marisol"), md.index("Colm"))
+        self.assertIn("Sim roster", md)
+
+
+class TestConfigSimFields(TempDirCase):
+    def test_sim_fields_have_sensible_defaults(self):
+        keys = [f.key for f in Config(self.tmp).sim_fields]
+        for expected in ("name", "household", "traits", "aspiration",
+                         "goals", "storyline"):
+            self.assertIn(expected, keys)
+
+    def test_sim_fields_round_trip(self):
+        config = Config(self.tmp)
+        config._sim_field_data.append({"key": "theme_song",
+                                       "label": "Theme song"})
+        config.save()
+        self.assertIn("theme_song",
+                      [f.key for f in Config(self.tmp).sim_fields])
+
+
+class TestAssets(unittest.TestCase):
+    def test_icon_files_ship_with_the_repo(self):
+        for name in ("icon.png", "icon.ico", "icon.icns"):
+            self.assertIsNotNone(Assets.path(name), f"{name} is missing")
+
+    def test_missing_asset_returns_none_rather_than_raising(self):
+        self.assertIsNone(Assets.path("no-such-file.png"))
+
+
+class TestPackagingFiles(unittest.TestCase):
+    """The build breaks in confusing ways if these go missing."""
+
+    ROOT = pathlib.Path(__file__).resolve().parent.parent
+
+    def test_required_files_exist(self):
+        for name in ("requirements.txt", "sims_tracker.py", "README.md",
+                     "LICENSE", ".github/workflows/release.yml"):
+            self.assertTrue((self.ROOT / name).exists(), f"{name} is missing")
+
+    def test_requirements_lists_psutil(self):
+        text = (self.ROOT / "requirements.txt").read_text().lower()
+        self.assertIn("psutil", text)
+
+
+class TestVersionSanity(unittest.TestCase):
+    """Cheap guard against source and tests drifting out of sync.
+
+    The CI failure that motivated this happened because some files were
+    updated in the repo and others weren't. This won't catch every case,
+    but it fails loudly if the package can't expose a coherent version.
+    """
+
+    def test_version_is_importable_and_sane(self):
+        import simstracker
+        parts = simstracker.__version__.split(".")
+        self.assertEqual(len(parts), 3, simstracker.__version__)
+        self.assertTrue(all(p.isdigit() for p in parts))
+
+    def test_sim_features_are_present(self):
+        """Fails fast if only some v1.2 files were copied over."""
+        from simstracker.models import SimProfile          # noqa: F401
+        from simstracker.repository import SimRepository   # noqa: F401
+        from simstracker.ui import SimsWindow              # noqa: F401
+        from simstracker.config import Config
+        self.assertTrue(hasattr(Config, "sim_fields"))
 
 
 if __name__ == "__main__":

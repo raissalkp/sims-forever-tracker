@@ -1,0 +1,116 @@
+name: Release
+
+# Builds a Windows .exe and a macOS binary and attaches both to a GitHub
+# Release every time a version tag is pushed:
+#
+#     git tag v1.2.0 && git push origin v1.2.0
+#
+# Use "Run workflow" on the Actions tab to build without releasing — the
+# binaries appear under the run's Artifacts instead.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch: {}
+
+# Required for softprops/action-gh-release to publish. The repo setting
+# Settings → Actions → General → Workflow permissions must also be set to
+# "Read and write permissions", or this is silently overridden.
+permissions:
+  contents: write
+
+jobs:
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-tk
+          pip install -r requirements.txt
+
+      - name: Compile check
+        # Catches syntax errors that would otherwise make PyInstaller
+        # silently omit a module from the bundle.
+        run: python -m compileall -q simstracker
+
+      - name: Smoke test
+        run: python sims_tracker.py --version
+
+      - name: Unit tests
+        run: python -m unittest discover -s tests -v
+
+  build:
+    name: Build ${{ matrix.label }}
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            label: Windows
+            artifact: SimsTracker-windows.exe
+            built: dist/SimsTracker.exe
+            flags: --onefile --noconsole
+            icon: assets/icon.ico
+            data: assets/icon.png;assets
+          - os: macos-latest
+            label: macOS
+            artifact: SimsTracker-macos
+            built: dist/SimsTracker
+            flags: --onefile --windowed
+            icon: assets/icon.icns
+            data: assets/icon.png:assets
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Build
+        # --collect-submodules bundles every module in the package
+        # regardless of what PyInstaller's import scanner concluded.
+        # --add-data uses ';' on Windows and ':' elsewhere, hence the
+        # per-OS value in the matrix.
+        run: >
+          pyinstaller ${{ matrix.flags }}
+          --collect-submodules simstracker
+          --icon ${{ matrix.icon }}
+          --add-data "${{ matrix.data }}"
+          --name SimsTracker
+          sims_tracker.py
+
+      - name: Rename artifact
+        shell: bash
+        run: mv "${{ matrix.built }}" "dist/${{ matrix.artifact }}"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist/${{ matrix.artifact }}
+          if-no-files-found: error
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/${{ matrix.artifact }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true

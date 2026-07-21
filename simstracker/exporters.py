@@ -9,7 +9,7 @@ import csv
 import io
 import json
 from abc import ABC, abstractmethod
-from .models import FieldSpec, Session
+from .models import FieldSpec, Session, SimProfile
 
 
 class Exporter(ABC):
@@ -34,9 +34,13 @@ class MarkdownExporter(Exporter):
 
     def render(self, sessions: list[Session]) -> str:
         if not sessions:
-            return "# Sims Forever Tracker\n\nNo sessions logged yet.\n"
-        parts = ["# Sims Forever Tracker — session journal", ""]
-        for session in reversed(sessions):  # oldest first reads as a story
+            return "# Sims Forever Tracker\n\nNothing recorded yet.\n"
+        is_roster = isinstance(sessions[0], SimProfile)
+        heading = ("# Sims Forever Tracker — Sim roster" if is_roster
+                   else "# Sims Forever Tracker — session journal")
+        parts = [heading, ""]
+        ordered = sessions if is_roster else list(reversed(sessions))
+        for session in ordered:   # sessions oldest-first, so they read as a story
             parts.append(session.to_markdown(self.fields))
             parts.append("---")
             parts.append("")
@@ -50,13 +54,14 @@ class TableExporter(Exporter):
     extension = ".md"
 
     def render(self, sessions: list[Session]) -> str:
-        headers = ["Date"] + [f.label for f in self.fields]
+        dated = bool(sessions) and hasattr(sessions[0], "logged_at")
+        headers = (["Date"] if dated else []) + [f.label for f in self.fields]
         lines = [
             "| " + " | ".join(headers) + " |",
             "| " + " | ".join("---" for _ in headers) + " |",
         ]
-        for session in reversed(sessions):
-            cells = [f"{session.logged_at:%Y-%m-%d %H:%M}"]
+        for session in (reversed(sessions) if dated else sessions):
+            cells = [f"{session.logged_at:%Y-%m-%d %H:%M}"] if dated else []
             cells += [
                 session.get(f.key).replace("\n", "<br>").replace("|", "\\|")
                 for f in self.fields
@@ -70,17 +75,17 @@ class CsvExporter(Exporter):
     extension = ".csv"
 
     def render(self, sessions: list[Session]) -> str:
+        dated = bool(sessions) and hasattr(sessions[0], "logged_at")
         buffer = io.StringIO()
         writer = csv.writer(buffer)
         writer.writerow(
-            ["logged_at", "played_minutes"] + [f.key for f in self.fields]
+            (["logged_at", "played_minutes"] if dated else [])
+            + [f.key for f in self.fields]
         )
-        for session in reversed(sessions):
-            writer.writerow(
-                [session.logged_at.isoformat(timespec="minutes"),
-                 session.played_minutes or ""]
-                + [session.get(f.key) for f in self.fields]
-            )
+        for session in (reversed(sessions) if dated else sessions):
+            base = ([session.logged_at.isoformat(timespec="minutes"),
+                     session.played_minutes or ""] if dated else [])
+            writer.writerow(base + [session.get(f.key) for f in self.fields])
         return buffer.getvalue()
 
 
@@ -89,15 +94,15 @@ class JsonExporter(Exporter):
     extension = ".json"
 
     def render(self, sessions: list[Session]) -> str:
-        payload = [
-            {
-                "logged_at": s.logged_at.isoformat(timespec="minutes"),
-                "played_minutes": s.played_minutes,
-                **{f.key: s.get(f.key) for f in self.fields},
-            }
-            for s in reversed(sessions)
-        ]
-        return json.dumps(payload, indent=2)
+        dated = bool(sessions) and hasattr(sessions[0], "logged_at")
+
+        def row(s):
+            base = ({"logged_at": s.logged_at.isoformat(timespec="minutes"),
+                     "played_minutes": s.played_minutes} if dated else {})
+            return {**base, **{f.key: s.get(f.key) for f in self.fields}}
+
+        ordered = reversed(sessions) if dated else sessions
+        return json.dumps([row(s) for s in ordered], indent=2)
 
 
 class ExporterRegistry:
